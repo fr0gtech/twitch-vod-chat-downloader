@@ -1,6 +1,15 @@
 
 import * as fs from 'fs'
 import puppeteer from 'puppeteer'
+import * as cliProgress from "cli-progress"
+
+const multibar = new cliProgress.MultiBar({
+    clearOnComplete: false,
+    hideCursor: true,
+    format: ' {bar} | {filename} | {value}/{total}',
+}, cliProgress.Presets.shades_grey);
+
+
 const MAX_RETRIES = 10
 
 /**
@@ -55,7 +64,11 @@ const getTwitchClientId = async (vodId: string, retryCount = 0): Promise<object>
     }
 };
 
-
+interface ChatUser {
+    username: string;
+    userId: string;
+    messageCount: number;
+  }
 
 /**
  * This downloads a full chat
@@ -67,6 +80,13 @@ async function getTwitchChat(vodId: string) {
     let run = true
     const [headers, vodDuration]: any = await getTwitchClientId(vodId);
     let contentOffset = 0
+
+    const userMap: { [userId: string]: ChatUser } = {};
+    let bars:any = []
+    for (let index = 0; index < 26; index++) {
+        bars[index] = multibar.create(200,0)
+    }
+    bars[0].setTotal(hmsToSecondsOnly(vodDuration));
 
     let body: any = {
         "operationName": "VideoCommentsByOffsetOrCursor",
@@ -96,9 +116,34 @@ async function getTwitchChat(vodId: string) {
             run = false
         } else if (res.data.video.comments.pageInfo.hasNextPage) {
             body.variables.contentOffsetSeconds = res.data.video.comments.edges[res.data.video.comments.edges.length - 1].node.contentOffsetSeconds + 1
-            res.data.video.comments.edges.forEach((e: any) => all.push(e))
+            // User ranking
+            res.data.video.comments.edges.forEach((e: any) => {              
+                if(e.node.message.fragments[0] === undefined || e.node.commenter === null) return;
+                if (userMap[e.node.commenter.id]) {
+                  userMap[e.node.commenter.id].messageCount++;
+                } else {
+                  userMap[e.node.commenter.id] = {
+                    username: e.node.commenter.displayName,
+                    userId: e.node.commenter.id,
+                    messageCount: 1,
+                  };
+                }
+            })
+          
         }
-        console.log(`got:${res.data.video.comments.edges.length} msgs, total:${all.length}, timestamp:${secondsToHMS(body.variables.contentOffsetSeconds)}/${vodDuration}`);
+      
+
+        //bar
+        const users: ChatUser[] = Object.values(userMap);
+        users.sort((a, b) => b.messageCount - a.messageCount);
+        const topUsers = users.slice(0, 25);
+        topUsers.forEach((user, index) => {
+            bars[index + 1].update(topUsers[index].messageCount, {filename: topUsers[index].username});
+            bars[index + 1].setTotal(topUsers[0].messageCount + (topUsers[0].messageCount / 100) * 10 )
+        });
+        bars[0].update(res.data.video.comments.edges[res.data.video.comments.edges.length - 1].node.contentOffsetSeconds + 1, {filename: `vod: ${vodId}`});
+
+        // console.log(`got:${res.data.video.comments.edges.length} msgs, total:${all.length}, timestamp:${secondsToHMS(body.variables.contentOffsetSeconds)}/${vodDuration}`);
     }
     fs.writeFileSync(`${vodId}.json`, JSON.stringify(all))
 
@@ -117,4 +162,16 @@ const secondsToHMS = (secs:string) => {
         .map(v => v < 10 ? "0" + v : v)
         .filter((v,i) => v !== "00" || i > 0)
         .join(":")
+}
+
+function hmsToSecondsOnly(str:any) {
+    var p = str.split(':'),
+        s = 0, m = 1;
+
+    while (p.length > 0) {
+        s += m * parseInt(p.pop(), 10);
+        m *= 60;
+    }
+
+    return s;
 }
