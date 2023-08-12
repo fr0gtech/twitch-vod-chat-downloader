@@ -5,9 +5,11 @@
   "license": "MIT",
   "dependencies": {
     "@types/puppeteer": "^7.0.4",
+    "cli-progress": "^3.12.0",
     "puppeteer": "^19.4.1"
   },
   "devDependencies": {
+    "@types/cli-progress": "^3.11.0",
     "@types/node": "^18.11.18"
   }
 }
